@@ -1,0 +1,256 @@
+---
+title: "Assignment2_Part1"
+author: "Ankita"
+date: "2025-03-03"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r results='hide'}
+library(tidyverse)
+library(lubridate)
+```
+
+
+## Q.1.
+```{r results='hide'}
+
+lcdf <- read_csv('lcdfSample.csv')
+str(lcdf)
+
+
+```
+
+
+## Q.2.
+```{r}
+
+#What is the proportion of defaults (‘charged off’ vs ‘fully paid’ loans) in the data?
+lcdf %>% group_by(loan_status) %>% tally()
+lcdf %>% group_by(loan_status) %>% summarise(n=n()) %>% mutate(proportion=n/sum(n))
+
+#How does loan status vary by loan grade and subgrade
+table(lcdf$loan_status, lcdf$grade)
+table(lcdf$loan_status, lcdf$sub_grade)
+
+#How many loans are there in each grade
+lcdf %>% group_by(grade) %>% tally()
+
+#loan amount by grade and loan status
+
+avg_loan_amount_by_grade_status <- aggregate(loan_amnt ~ grade + loan_status, data = lcdf, FUN = mean)
+ggplot(avg_loan_amount_by_grade_status, aes(x = grade, y = loan_amnt, fill = loan_status)) +
+  geom_bar(stat = 'identity', position = 'dodge', color = 'black') +
+  labs(title = 'Average Loan Amount by Grade and Loan Status',
+       x = 'Loan Grade',
+       y = 'Average Loan Amount ($)',
+       fill = 'Loan Status') +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+
+
+ggplot(lcdf, aes(x = grade, y = loan_amnt, fill = loan_status)) + geom_boxplot()
+  
+
+
+#How does int_rate vary by loan grade?
+ggplot(lcdf, aes( int_rate, fill = grade))+geom_boxplot()
+
+
+interest_rate_stats_by_grade <- aggregate(int_rate ~ grade, data = lcdf, 
+                                           FUN = function(x) c(mean = mean(x), sd = sd(x), min = min(x), max = max(x)))
+interest_rate_stats_by_grade <- do.call(data.frame, interest_rate_stats_by_grade)
+ggplot(interest_rate_stats_by_grade, aes(x = grade, y = int_rate.mean)) +
+  geom_bar(stat = 'identity', fill = 'skyblue', color = 'black') +
+  geom_errorbar(aes(ymin = int_rate.min, ymax = int_rate.max), width = 0.2, color = 'red') +
+  labs(title = 'Average Interest Rate by Loan Grade',
+       x = 'Loan Grade',
+       y = 'Interest Rate (%)') +
+  theme_minimal()
+
+#How does int-rate vary by subgrade?
+ggplot(lcdf, aes( int_rate, fill = sub_grade))+geom_boxplot()
+
+
+interest_rate_stats_by_sub_grade <- aggregate(int_rate ~ sub_grade, data = lcdf, 
+                                               FUN = function(x) c(mean = mean(x), sd = sd(x), min = min(x), max = max(x)))
+interest_rate_stats_by_sub_grade <- do.call(data.frame, interest_rate_stats_by_sub_grade)
+ggplot(interest_rate_stats_by_sub_grade, aes(x = sub_grade, y = int_rate.mean)) +
+  geom_bar(stat = 'identity', fill = 'lightgreen', color = 'black') +
+  geom_errorbar(aes(ymin = int_rate.min, ymax = int_rate.max), width = 0.2, color = 'blue') +
+  labs(title = 'Average Interest Rate by Loan Sub-Grade',
+       x = 'Loan Sub-Grade',
+       y = 'Interest Rate (%)') +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+
+
+#Does int_rate relate to loan_status?
+ggplot(lcdf, aes(x = grade, y = int_rate, fill = loan_status))+geom_boxplot()
+
+
+#How does actual-term vary by loan grade
+head(lcdf[, c("last_pymnt_d","issue_d")])
+lcdf$last_pymnt_d<-parse_date_time(lcdf$last_pymnt_d, "myd")
+head(lcdf[, c("last_pymnt_d","issue_d")])
+lcdf$actual_term<-ifelse(lcdf$loan_status=="Fully Paid", as.duration(lcdf$issue_d  %--% lcdf$last_pymnt_d)/dyears(1), 3)
+
+ggplot(lcdf, aes(x = grade, y = actual_term, fill = grade)) +
+  geom_boxplot(outlier.color = 'red', outlier.shape = 16, notch = TRUE) +
+  labs(title = 'Actual Term (Years) by Loan Grade',
+       x = 'Loan Grade',
+       y = 'Actual Term (Years)') +
+  theme_minimal() +
+  scale_fill_brewer(palette = 'Set3')
+
+#Annual return for a loan
+lcdf$actualReturn <- ifelse(lcdf$actual_term>0, ((lcdf$total_pymnt -lcdf$funded_amnt)/lcdf$funded_amnt)
+*(1/lcdf$actual_term)*100, 0)
+
+#Retun on charged-off loans
+lcdf_charged_off <- subset(lcdf, loan_status == 'Charged Off')
+lcdf_charged_off$return <- ((lcdf_charged_off$total_pymnt - lcdf_charged_off$funded_amnt) / 
+                            lcdf_charged_off$funded_amnt) * 100
+avg_return_by_grade <- aggregate(return ~ grade, data = lcdf_charged_off, FUN = mean)
+
+ggplot(lcdf_charged_off, aes(x = grade, y = return, fill = grade)) +
+  geom_boxplot(outlier.color = 'red', outlier.shape = 16, notch = TRUE) +
+  geom_hline(yintercept = 0, linetype = 'dashed', color = 'red') +
+  labs(title = 'Return on Investment by Loan Grade for Charged-Off Loans',
+       x = 'Loan Grade',
+       y = 'Return (%)') +
+  theme_minimal() +
+  scale_fill_brewer(palette = 'Set2')
+
+# average return values with the average interest-rate on loans
+avg_values_by_grade <- aggregate(cbind(return, int_rate) ~ grade, data = lcdf_charged_off, FUN = mean)
+
+ggplot(avg_values_by_grade, aes(x = grade)) +
+  geom_bar(aes(y = return, fill = 'Return'), stat = 'identity', position = 'dodge', color = 'black') +
+  geom_bar(aes(y = int_rate, fill = 'Interest Rate'), stat = 'identity', position = 'dodge', color = 'black') +
+  scale_fill_manual(values = c('Return' = 'skyblue', 'Interest Rate' = 'orange')) +
+  labs(title = 'Comparison of Average Return and Interest Rate by Loan Grade',
+       x = 'Loan Grade',
+       y = 'Percentage (%)',
+       fill = 'Metric') +
+  theme_minimal()
+
+
+#How do returns vary by sub-grade?
+avg_return_by_sub_grade <- aggregate(return ~ sub_grade, data = lcdf_charged_off, FUN = mean)
+ggplot(avg_return_by_sub_grade, aes(x = sub_grade, y = return, fill = sub_grade)) +
+  geom_bar(stat = 'identity', color = 'black') +
+  labs(title = 'Average Return by Loan Sub-Grade',
+       x = 'Loan Sub-Grade',
+       y = 'Average Return (%)') +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+
+
+# Analyze loan purpose
+purpose_summary <- aggregate(cbind(funded_amnt, int_rate) ~ purpose, data = lcdf, 
+                             FUN = function(x) c(count = length(x), mean = mean(x), sd = sd(x)))
+purpose_summary <- do.call(data.frame, purpose_summary)
+# Examine defaults by purpose
+default_rate_by_purpose <- aggregate(loan_status == 'Charged Off' ~ purpose, data = lcdf, mean)
+colnames(default_rate_by_purpose) <- c('purpose', 'default_rate')
+# Analyze loan grade distribution by purpose
+grade_distribution_by_purpose <- aggregate(grade ~ purpose, data = lcdf, function(x) 
+                                            as.list(table(x) / length(x) * 100))
+# Merge data into a summary table
+loan_purpose_summary <- merge(purpose_summary, default_rate_by_purpose, by = 'purpose')
+loan_purpose_summary <- merge(loan_purpose_summary, grade_distribution_by_purpose, by = 'purpose')
+# Visualize loan amounts by purpose
+ggplot(lcdf, aes(x = purpose, y = loan_amnt, fill = purpose)) +
+  geom_boxplot(outlier.color = 'red', outlier.shape = 16, notch = TRUE) +
+  labs(title = 'Loan Amount Distribution by Purpose',
+       x = 'Loan Purpose',
+       y = 'Loan Amount ($)') +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+# Visualize default rates by purpose
+ggplot(default_rate_by_purpose, aes(x = reorder(purpose, -default_rate), y = default_rate, fill = purpose)) +
+  geom_bar(stat = 'identity', color = 'black') +
+  labs(title = 'Default Rate by Loan Purpose',
+       x = 'Loan Purpose',
+       y = 'Default Rate (%)') +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+## Calculate the actual return for all loans
+lcdf$return <- ((lcdf$total_pymnt - lcdf$funded_amnt) / lcdf$funded_amnt) * 100
+
+
+
+######How does borrower characteristics relate to loan attributes?
+
+
+# Analyze relationships between borrower characteristics and loan attributes
+analysis_data <- lcdf %>% 
+  select(emp_length, annual_inc,loan_amnt, loan_status, grade, purpose, return)
+summary_stats <- analysis_data %>% 
+  group_by(grade) %>% 
+  summarise(
+    avg_emp_length = mean(as.numeric(gsub('[^0-9]', '', emp_length)), na.rm = TRUE),
+    avg_annual_inc = mean(annual_inc, na.rm = TRUE),
+    avg_loan_amnt = mean(loan_amnt, na.rm = TRUE),
+    avg_return = mean(return, na.rm = TRUE)
+  )
+summary_stats
+
+
+##Generate some (at least 3) new derived attributes
+
+# 1. Adjusted Debt-to-Income Ratio
+lcdf$adjusted_dti <- lcdf$dti * (lcdf$loan_amnt / lcdf$annual_inc)
+
+ggplot(lcdf, aes(x = loan_status, y = adjusted_dti, fill = loan_status)) +
+  geom_boxplot(outlier.color = 'red', outlier.shape = 16, notch = TRUE) +
+  labs(title = 'Adjusted DTI by Loan Status',
+       x = 'Loan Status',
+       y = 'Adjusted DTI') +
+  theme_minimal() +
+  scale_fill_brewer(palette = 'Set2')
+
+
+# 2. Credit Utilization Metric
+lcdf$credit_utilization <- lcdf$revol_bal / (lcdf$annual_inc / 12)
+
+ggplot(lcdf, aes(x = loan_status, y = credit_utilization, fill = loan_status)) +
+  geom_boxplot(outlier.color = 'red', outlier.shape = 16, notch = TRUE) +
+  labs(title = 'Credit Utilization by Loan Status',
+       x = 'Loan Status',
+       y = 'Credit Utilization') +
+  theme_minimal() +
+  scale_fill_brewer(palette = 'Set3')
+
+
+
+# 3. Payment-to-Income Ratio
+lcdf$payment_to_income <- lcdf$installment / (lcdf$annual_inc / 12)
+
+ggplot(lcdf, aes(x = loan_status, y = payment_to_income, fill = loan_status)) +
+  geom_boxplot(outlier.color = 'red', outlier.shape = 16, notch = TRUE) +
+  labs(title = 'Payment-to-Income Ratio by Loan Status',
+       x = 'Loan Status',
+       y = 'Payment-to-Income Ratio') +
+  theme_minimal() +
+  scale_fill_brewer(palette = 'Set1')
+
+
+#Missing VAlues
+
+
+
+```
