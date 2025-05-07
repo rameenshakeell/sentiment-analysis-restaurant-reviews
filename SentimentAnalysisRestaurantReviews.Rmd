@@ -1,8 +1,10 @@
 ---
-title: "Assignment2_Part1"
-author: "Ankita"
-date: "2025-03-03"
-output: html_document
+title: "sentiment-analysis-restaurant-reviews"
+author: "Rameen Shakeel"
+date: "2025-04-11"
+output:
+  html_document: default
+  pdf_document: default
 ---
 
 ```{r setup, include=FALSE}
@@ -15,242 +17,584 @@ This is an R Markdown document. Markdown is a simple formatting syntax for autho
 
 When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
 
-```{r results='hide'}
-library(tidyverse)
-library(lubridate)
+```{r results=FALSE, cache=TRUE}
+
+library('tidyverse')
+library(dplyr)
+
+
+# the data file uses ';' as delimiter, and for this we use the read_csv2 function
+resReviewsData <- read_csv2('resReviewsSample.csv')
+
+glimpse(resReviewsData)
+
+
+#total no of restaurants
+total_restaurants <- length(unique(resReviewsData$business_id))
+cat("Total number of restaurants:", total_restaurants, "\n")
+
+#total no of reviews
+total_reviews <- sum(!is.na(resReviewsData$review_id))
+cat("Total number of reviews:", total_reviews, "\n")
+
+#distribution of reviews across restaurants
+
+review_distribution <- resReviewsData %>%
+  group_by(business_id) %>%
+  summarise(review_count = n()) %>%
+  arrange(desc(review_count))
+
+summary(review_distribution$review_count)
+
+hist(review_distribution$review_count, 
+     main = "Distribution of Review Counts per Restaurant",
+     xlab = "Number of Reviews", 
+     col = "lightblue", 
+     breaks = 50)
+
+#number of reviews by star-rating
+resReviewsData %>% group_by(starsReview) %>% count()
+
+#hist(resReviewsData$stars)
+ggplot(resReviewsData, aes(x= funny, y=starsReview)) +geom_point()
+#ggplot(resReviewsData, aes(x= cool, y=stars)) +geom_point()
+#ggplot(resReviewsData, aes(x= useful, y=stars)) +geom_point()
+
+
+
+#How do review-stars relate to stars for the businesses
+resReviewsData %>%   group_by(starsBusiness) %>% tally() 
+    #are these distributed similarly with the review stars which you obtained above?
+
+#Scatter plot - it is better to use geom_jitter instead of geom_point here so that 
+#    we overlapping points are 'jittered' for better viewing and insights
+resReviewsData %>%  ggplot( aes(x = starsBusiness, y = starsReview)) +
+     geom_jitter(alpha = 0.2, width = 0.2, height = 0.2) +
+     labs( title = "Individual Review Rating vs Business Star Rating",
+            x = "Business Star Rating",
+            y = "Individual Review Star Rating")
+
+#We can add a smoothed trend line to see if there is a pattern
+resReviewsData %>%  ggplot( aes(x = starsBusiness, y = starsReview)) +
+     geom_jitter(alpha = 0.2, width = 0.2, height = 0.2) +
+     geom_smooth(method = "lm", color = "red") +
+     labs( title = "Individual Review Rating vs Business Star Rating",
+            x = "Business Star Rating",
+            y = "Individual Review Star Rating")
+
+
+#To see differences, we can also calculate the difference between the starsReview and starsBusiness values, and do a histogram
+resReviewsData %>%  mutate(rating_diff = starsReview - starsBusiness) %>% 
+     ggplot( aes(x = rating_diff)) +
+       geom_histogram(binwidth = 0.5, fill = "steelblue", color = "white") +
+         labs(title = "Difference Between Review Rating and Business Star Rating",
+              x = "starReviews - starBusiness",
+              y = "Number of Reviews")
+ # What do you observe?
+
+
+
+#identify the top 25 and bottom 25 restaurants(by reviewStars),and cities they are in
+review_summary <- resReviewsData %>% group_by(name, city) %>%
+  summarise( avgReviewStars = mean(starsReview), n_reviews = n(),
+ .groups = "drop")  #it is important to drop the groupings, for any further operations on this resulting dataframe.
+
+
+top_25 <- review_summary %>% top_n(25, avgReviewStars)
+bottom_25 <- review_summary %>% top_n(-25, avgReviewStars)
+print(top_25)
+print(bottom_25)
+
+summary(top_25)
+summary(bottom_25)
+
+
+
+#Inconsistent ratings
+inconsistent_restaurants <- resReviewsData %>% group_by(name, city, categories) %>%       summarise(avgRating = mean(starsReview),
+               sdRating = sd(starsReview),
+               minRating = min(starsReview, na.rm = TRUE),
+               maxRating = max(starsReview, na.rm = TRUE),
+               nr = n(), .groups = "drop") %>% arrange(desc(sdRating))
+#Plot inconsistently rated restaurants by their average rating
+inconsistent_restaurants %>%
+          ggplot(aes(x = avgRating, y = sdRating, size = nr)) +
+          geom_point(alpha = 0.6) +
+          geom_smooth(method = "lm", color = "red") +
+          labs(title = "Restaurant Rating Consistency", x = "Average Rating",
+               y = "Standard Deviation of Ratings", size = "Number of Reviews")
+ 
+
+#The reviews are from various locations -- check
+resReviewsData %>%   group_by(state) %>% tally() %>% view()
+ #Can also check the postal-codes`
+
+#If you have any unrecoginzied codes, and want to keep only the those reviews from 5-digit postal-codes  
+rrData <- resReviewsData %>% filter(str_detect(postal_code, "^[0-9]{1,5}"))
+
+
+#Rename the 'starsReview' column to 'stars' -- since we will focus on this in next
+rrData <-  resReviewsData %>% rename(stars=starsReview)
+
+
 ```
 
 
-## Q.1.
-```{r results='hide'}
+Use tidytext for tokenization, removing stopworks, stemming/lemmatization, etc.
+```{r message=FALSE , cache=TRUE}
 
-lcdf <- read_csv('lcdfSample.csv')
-str(lcdf)
+library(tidytext)
+library(SnowballC)
+library(textstem)
 
+#tokenize the text of the reviews in the column named 'text'
+rrTokens <- rrData %>% unnest_tokens(word, text)
+   # this will retain all other attributes
+#Or we can select just the review_id and the text column
+rrTokens <- rrData %>% select(review_id, stars, text ) %>% unnest_tokens(word, text)
+
+#How many tokens?
+rrTokens %>% distinct(word) %>% dim()
+
+
+#remove stopwords
+rrTokens <- rrTokens %>% anti_join(stop_words)
+ #compare with earlier - what fraction of tokens were stopwords?
+rrTokens %>% distinct(word) %>% dim()
+
+
+#count the total occurrences of differet words, & sort by most frequent
+rrTokens %>% count(word, sort=TRUE) %>% top_n(10)
+
+#Are there some words that occur in a large majority of reviews, or which are there in very few reviews?   Let's remove the words which are not present in at least 10 reviews
+rareWords <-rrTokens %>% count(word, sort=TRUE) %>% filter(n<10)
+xx<-anti_join(rrTokens, rareWords)
+
+#check the words in xx .... 
+xx %>% count(word, sort=TRUE) %>% view()
+   #you willl see that among the least frequently occurring words are those starting with or including numbers (as in 6oz, 1.15,...).  To remove these
+xx2<- xx %>% filter(str_detect(word,"[0-9]")==FALSE)
+   #the variable xx, xx2 are for checking ....if this is what we want, set the rrTokens to the reduced set of words.  And you can remove xx, xx2 from the environment.
+rrTokens<- xx2
+
+```
+
+Analyze words by star ratings 
+```{r  message=FALSE , cache=TRUE}
+
+#Check words by star rating of reviews
+rrTokens %>% group_by(stars) %>% count(word, sort=TRUE)
+#or...
+rrTokens %>% group_by(stars) %>% count(word, sort=TRUE) %>% arrange(desc(stars)) %>% view()
+
+
+#proportion of word occurrence by star ratings
+ws <- rrTokens %>% group_by(stars) %>% count(word, sort=TRUE)
+ws<-  ws %>% group_by(stars) %>% mutate(prop=n/sum(n))
+
+#check the proportion of 'love' among reviews with 1,2,..5 stars 
+ws %>% filter(word=='love')
+
+#what are the most commonly used words by star rating
+ws %>% group_by(stars) %>% arrange(stars, desc(prop)) %>% view()
+
+#to see the top 25 words by star ratings
+ws %>% group_by(stars) %>% arrange(stars, desc(prop)) %>% filter(row_number()<=25) %>% view()
+
+#To plot this
+ws %>% group_by(stars) %>% arrange(stars, desc(prop)) %>% filter(row_number()<=25) %>% ggplot(aes(word, prop))+geom_col()+coord_flip()+facet_wrap((~stars))
+# plot without words like ‘food’, ‘time’,… which occurs across ratings
+ws %>% filter(! word %in% c('food', 'time', 'restaurant', 'service')) %>% group_by(stars) %>% arrange(stars, desc(prop)) %>% filter(row_number() <= 15) %>% ggplot(aes(word, prop))+geom_col()+coord_flip()+facet_wrap((~stars))
+#Add some color – plot can be better if we color by word?
+ws %>% filter(! word %in% c('food', 'time', 'restaurant', 'service')) %>% group_by(stars) %>% arrange(stars, desc(prop)) %>% filter(row_number() <= 20) %>% ggplot(aes(word, prop, fill = word)) + geom_col(show.legend = FALSE) + coord_flip() + facet_wrap(~stars)
+
+
+#Or, separate plots by stars
+ws %>% filter(stars==1)  %>%  ggplot(aes(word, n)) + geom_col()+coord_flip()
+
+
+#Can we get a sense of which words are related to higher/lower star ratings in general? 
+#One approach is to calculate the average star rating associated with each word - can sum the star ratings associated with reviews where each word occurs in.  Can consider the proportion of each word among reviews with a star rating.
+xx<- ws %>% group_by(word) %>% summarise(totWS=sum(stars*prop))
+
+#What are the 25 words with highest and lowest star rating
+xx %>% top_n(25)
+xx %>% top_n(-25)
+   #Q - does this 'make sense'?
+
+```
+
+Stemming and Lemmatization
+```{r , cache=TRUE}
+rrTokens_stem<-rrTokens %>%  mutate(word_stem = SnowballC::wordStem(word))
+rrTokens_lemm<-rrTokens %>%  mutate(word_lemma = textstem::lemmatize_words(word))
+   #Check the original words, and their stemmed-words and word-lemmas
 
 ```
 
 
-## Q.2.
-```{r}
+Term-frequency, tf-idf
+```{r  message=FALSE , cache=TRUE}
 
-#What is the proportion of defaults (‘charged off’ vs ‘fully paid’ loans) in the data?
-lcdf %>% group_by(loan_status) %>% tally()
-lcdf %>% group_by(loan_status) %>% summarise(n=n()) %>% mutate(proportion=n/sum(n))
+#tokenize, remove stopwords, and lemmatize (or you can use stemmed words instead of lemmatization)
+rrTokens<-rrTokens %>%  mutate(word = textstem::lemmatize_words(word))
 
-#How does loan status vary by loan grade and subgrade
-table(lcdf$loan_status, lcdf$grade)
-table(lcdf$loan_status, lcdf$sub_grade)
+#Or, to you can tokenize, remove stopwords, lemmatize  as
+#rrTokens <- resReviewsData %>% select(review_id, stars, text, ) %>% unnest_tokens(word, text) %>%  anti_join(stop_words) %>% mutate(word = textstem::lemmatize_words(word))
+ 
 
-#How many loans are there in each grade
-lcdf %>% group_by(grade) %>% tally()
-
-#loan amount by grade and loan status
-
-avg_loan_amount_by_grade_status <- aggregate(loan_amnt ~ grade + loan_status, data = lcdf, FUN = mean)
-ggplot(avg_loan_amount_by_grade_status, aes(x = grade, y = loan_amnt, fill = loan_status)) +
-  geom_bar(stat = 'identity', position = 'dodge', color = 'black') +
-  labs(title = 'Average Loan Amount by Grade and Loan Status',
-       x = 'Loan Grade',
-       y = 'Average Loan Amount ($)',
-       fill = 'Loan Status') +
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+#We may want to filter out words with less than 3 characters and those with more than 15 characters
+rrTokens<-rrTokens %>% filter(str_length(word)<=3 | str_length(word)<=15)
 
 
-ggplot(lcdf, aes(x = grade, y = loan_amnt, fill = loan_status)) + geom_boxplot()
-  
+rrTokens<- rrTokens %>% group_by(review_id, stars) %>% count(word)
 
+#count total number of words by review, and add this in a column
+totWords<-rrTokens  %>% group_by(review_id) %>%  count(word, sort=TRUE) %>% summarise(total=sum(n))
+xx<-left_join(rrTokens, totWords)
+  # now n/total gives the tf values
+xx<-xx %>% mutate(tf=n/total)
+head(xx)
 
-#How does int_rate vary by loan grade?
-ggplot(lcdf, aes( int_rate, fill = grade))+geom_boxplot()
+#We can use the bind_tfidf function to calculate the tf, idf and tfidf values
+# (https://www.rdocumentation.org/packages/tidytext/versions/0.2.2/topics/bind_tf_idf)
+rrTokens<-rrTokens %>% bind_tf_idf(word, review_id, n)
+head(rrTokens)
 
-
-interest_rate_stats_by_grade <- aggregate(int_rate ~ grade, data = lcdf, 
-                                           FUN = function(x) c(mean = mean(x), sd = sd(x), min = min(x), max = max(x)))
-interest_rate_stats_by_grade <- do.call(data.frame, interest_rate_stats_by_grade)
-ggplot(interest_rate_stats_by_grade, aes(x = grade, y = int_rate.mean)) +
-  geom_bar(stat = 'identity', fill = 'skyblue', color = 'black') +
-  geom_errorbar(aes(ymin = int_rate.min, ymax = int_rate.max), width = 0.2, color = 'red') +
-  labs(title = 'Average Interest Rate by Loan Grade',
-       x = 'Loan Grade',
-       y = 'Interest Rate (%)') +
-  theme_minimal()
-
-#How does int-rate vary by subgrade?
-ggplot(lcdf, aes( int_rate, fill = sub_grade))+geom_boxplot()
-
-
-interest_rate_stats_by_sub_grade <- aggregate(int_rate ~ sub_grade, data = lcdf, 
-                                               FUN = function(x) c(mean = mean(x), sd = sd(x), min = min(x), max = max(x)))
-interest_rate_stats_by_sub_grade <- do.call(data.frame, interest_rate_stats_by_sub_grade)
-ggplot(interest_rate_stats_by_sub_grade, aes(x = sub_grade, y = int_rate.mean)) +
-  geom_bar(stat = 'identity', fill = 'lightgreen', color = 'black') +
-  geom_errorbar(aes(ymin = int_rate.min, ymax = int_rate.max), width = 0.2, color = 'blue') +
-  labs(title = 'Average Interest Rate by Loan Sub-Grade',
-       x = 'Loan Sub-Grade',
-       y = 'Interest Rate (%)') +
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
 
 
 
-#Does int_rate relate to loan_status?
-ggplot(lcdf, aes(x = grade, y = int_rate, fill = loan_status))+geom_boxplot()
+```{r, message=FALSE , cache=TRUE}
 
+library(textdata)
 
-#How does actual-term vary by loan grade
-head(lcdf[, c("last_pymnt_d","issue_d")])
-lcdf$last_pymnt_d<-parse_date_time(lcdf$last_pymnt_d, "myd")
-head(lcdf[, c("last_pymnt_d","issue_d")])
-lcdf$actual_term<-ifelse(lcdf$loan_status=="Fully Paid", as.duration(lcdf$issue_d  %--% lcdf$last_pymnt_d)/dyears(1), 3)
-
-ggplot(lcdf, aes(x = grade, y = actual_term, fill = grade)) +
-  geom_boxplot(outlier.color = 'red', outlier.shape = 16, notch = TRUE) +
-  labs(title = 'Actual Term (Years) by Loan Grade',
-       x = 'Loan Grade',
-       y = 'Actual Term (Years)') +
-  theme_minimal() +
-  scale_fill_brewer(palette = 'Set3')
-
-#Annual return for a loan
-lcdf$actualReturn <- ifelse(lcdf$actual_term>0, ((lcdf$total_pymnt -lcdf$funded_amnt)/lcdf$funded_amnt)
-*(1/lcdf$actual_term)*100, 0)
-
-#Retun on charged-off loans
-lcdf_charged_off <- subset(lcdf, loan_status == 'Charged Off')
-lcdf_charged_off$return <- ((lcdf_charged_off$total_pymnt - lcdf_charged_off$funded_amnt) / 
-                            lcdf_charged_off$funded_amnt) * 100
-avg_return_by_grade <- aggregate(return ~ grade, data = lcdf_charged_off, FUN = mean)
-
-ggplot(lcdf_charged_off, aes(x = grade, y = return, fill = grade)) +
-  geom_boxplot(outlier.color = 'red', outlier.shape = 16, notch = TRUE) +
-  geom_hline(yintercept = 0, linetype = 'dashed', color = 'red') +
-  labs(title = 'Return on Investment by Loan Grade for Charged-Off Loans',
-       x = 'Loan Grade',
-       y = 'Return (%)') +
-  theme_minimal() +
-  scale_fill_brewer(palette = 'Set2')
-
-# average return values with the average interest-rate on loans
-avg_values_by_grade <- aggregate(cbind(return, int_rate) ~ grade, data = lcdf_charged_off, FUN = mean)
-
-ggplot(avg_values_by_grade, aes(x = grade)) +
-  geom_bar(aes(y = return, fill = 'Return'), stat = 'identity', position = 'dodge', color = 'black') +
-  geom_bar(aes(y = int_rate, fill = 'Interest Rate'), stat = 'identity', position = 'dodge', color = 'black') +
-  scale_fill_manual(values = c('Return' = 'skyblue', 'Interest Rate' = 'orange')) +
-  labs(title = 'Comparison of Average Return and Interest Rate by Loan Grade',
-       x = 'Loan Grade',
-       y = 'Percentage (%)',
-       fill = 'Metric') +
-  theme_minimal()
-
-
-#How do returns vary by sub-grade?
-avg_return_by_sub_grade <- aggregate(return ~ sub_grade, data = lcdf_charged_off, FUN = mean)
-ggplot(avg_return_by_sub_grade, aes(x = sub_grade, y = return, fill = sub_grade)) +
-  geom_bar(stat = 'identity', color = 'black') +
-  labs(title = 'Average Return by Loan Sub-Grade',
-       x = 'Loan Sub-Grade',
-       y = 'Average Return (%)') +
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+#take a look at the wordsin the sentimennt dictionaries
+get_sentiments("bing") %>% view()
+get_sentiments("nrc") %>% view()
+get_sentiments("afinn") %>% view()
 
 
 
-# Analyze loan purpose
-purpose_summary <- aggregate(cbind(funded_amnt, int_rate) ~ purpose, data = lcdf, 
-                             FUN = function(x) c(count = length(x), mean = mean(x), sd = sd(x)))
-purpose_summary <- do.call(data.frame, purpose_summary)
-# Examine defaults by purpose
-default_rate_by_purpose <- aggregate(loan_status == 'Charged Off' ~ purpose, data = lcdf, mean)
-colnames(default_rate_by_purpose) <- c('purpose', 'default_rate')
-# Analyze loan grade distribution by purpose
-grade_distribution_by_purpose <- aggregate(grade ~ purpose, data = lcdf, function(x) 
-                                            as.list(table(x) / length(x) * 100))
-# Merge data into a summary table
-loan_purpose_summary <- merge(purpose_summary, default_rate_by_purpose, by = 'purpose')
-loan_purpose_summary <- merge(loan_purpose_summary, grade_distribution_by_purpose, by = 'purpose')
-# Visualize loan amounts by purpose
-ggplot(lcdf, aes(x = purpose, y = loan_amnt, fill = purpose)) +
-  geom_boxplot(outlier.color = 'red', outlier.shape = 16, notch = TRUE) +
-  labs(title = 'Loan Amount Distribution by Purpose',
-       x = 'Loan Purpose',
-       y = 'Loan Amount ($)') +
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 90, hjust = 1))
-# Visualize default rates by purpose
-ggplot(default_rate_by_purpose, aes(x = reorder(purpose, -default_rate), y = default_rate, fill = purpose)) +
-  geom_bar(stat = 'identity', color = 'black') +
-  labs(title = 'Default Rate by Loan Purpose',
-       x = 'Loan Purpose',
-       y = 'Default Rate (%)') +
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+#sentiment of words in rrTokens
+rrSenti_bing<- rrTokens %>% left_join(get_sentiments("bing"), by="word")
 
-## Calculate the actual return for all loans
-lcdf$return <- ((lcdf$total_pymnt - lcdf$funded_amnt) / lcdf$funded_amnt) * 100
+#if we want to retain only the words which match the sentiment dictionary, do an inner-join
+rrSenti_bing<- rrTokens %>% inner_join(get_sentiments("bing"), by="word")
 
 
+#Analyze Which words contribute to positive/negative sentiment - we can count the ocurrences of positive/negative sentiment words in the reviews
+xx<-rrSenti_bing %>% group_by(word, sentiment) %>% summarise(totOcc=sum(n)) %>% arrange(sentiment, desc(totOcc))
+ #negate the counts for the negative sentiment words
+xx<- xx %>% mutate (totOcc=ifelse(sentiment=="positive", totOcc, -totOcc))
 
-######How does borrower characteristics relate to loan attributes?
+#the most positive and most negative words
+xx<-ungroup(xx)
+xx %>% top_n(25)
+xx %>% top_n(-25)
+
+#You can plot these
+rbind(top_n(xx, 25), top_n(xx, -25)) %>% ggplot(aes(word, totOcc, fill=sentiment)) +geom_col()+coord_flip()
+
+#or, with a better reordering of words
+rbind(top_n(xx, 25), top_n(xx, -25)) %>% mutate(word=reorder(word,totOcc)) %>% ggplot(aes(word, totOcc, fill=sentiment)) +geom_col()+coord_flip()
+
+#Q - does this 'make sense'?  Do the different dictionaries give similar results; do you notice much difference?
 
 
-# Analyze relationships between borrower characteristics and loan attributes
-analysis_data <- lcdf %>% 
-  select(emp_length, annual_inc,loan_amnt, loan_status, grade, purpose, return)
-summary_stats <- analysis_data %>% 
-  group_by(grade) %>% 
+#with "nrc" dictionary
+rrSenti_nrc<-rrTokens %>% inner_join(get_sentiments("nrc"), by="word") %>% group_by (word, sentiment) %>% summarise(totOcc=sum(n)) %>% arrange(sentiment, desc(totOcc))
+
+#How many words for the different sentiment categories
+rrSenti_nrc %>% group_by(sentiment) %>% summarise(count=n(), sumn=sum(totOcc))
+
+#In 'nrc', the dictionary contains words defining different sentiments, like anger, disgust, positive, negative, joy, trust,.....   you should check the words deonting these different sentiments
+rrSenti_nrc %>% filter(sentiment=='anticipation') %>% view()
+rrSenti_nrc %>% filter(sentiment=='fear') %>% view()
+#...
+
+#Suppose you want   to consider  {anger, disgust, fear sadness, negative} to denote 'bad' reviews, and {positive, joy, anticipation, trust} to denote 'good' reviews
+xx<-rrSenti_nrc %>% mutate(goodBad=ifelse(sentiment %in% c('anger', 'disgust', 'fear', 'sadness', 'negative'), -totOcc, ifelse(sentiment %in% c('positive', 'joy', 'anticipation', 'trust'), totOcc, 0)))
+
+xx<-ungroup(xx)
+top_n(xx, 10)
+top_n(xx, -10)
+
+rbind(top_n(xx, 25), top_n(xx, -25)) %>% mutate(word=reorder(word,goodBad)) %>% ggplot(aes(word, goodBad, fill=goodBad)) +geom_col()+coord_flip()
+```
+```{r afinn-analysis, message=FALSE}
+# AFINN carries a numeric value for sentiment (from -5 to +5).
+# We use this to compute overall sentiment score per word.
+
+# Join rrTokens with the AFINN sentiment dictionary
+rrSenti_afinn <- rrTokens %>% 
+  inner_join(get_sentiments("afinn"), by = "word")
+
+# Calculate the total valence score of each word, weighted by its frequency
+afinn_summary <- rrSenti_afinn %>% 
+  group_by(word) %>% 
+  summarise(total_valence = sum(value * n), .groups = "drop") %>% 
+  arrange(desc(total_valence))
+
+# View top 20 most positive sentiment words
+afinn_summary %>% 
+  slice_max(total_valence, n = 20)
+
+# Optional: View top 20 most negative sentiment words
+afinn_summary %>% 
+  slice_min(total_valence, n = 20)
+
+# Plot the top 15 most positive sentiment words
+afinn_summary %>% 
+  slice_max(total_valence, n = 15) %>% 
+  ggplot(aes(x = reorder(word, total_valence), y = total_valence)) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  labs(title = "Top Words by Positive Sentiment (AFINN)", x = "Word", y = "Total Valence")
+
+# Plot the top 15 most negative sentiment words
+afinn_summary %>% 
+  slice_min(total_valence, n = 15) %>% 
+  ggplot(aes(x = reorder(word, total_valence), y = total_valence)) +
+  geom_col(fill = "tomato") +
+  coord_flip() +
+  labs(title = "Top Words by Negative Sentiment (AFINN)", x = "Word", y = "Total Valence")
+```
+```{r q4_sentiment_scores, message=FALSE, warning=FALSE}
+# Create binary sentiment label: 1 if stars >= 4, else 0
+rrLabels <- rrData %>% 
+  mutate(sentimentLabel = ifelse(stars >= 4, 1, 0)) %>%
+  select(review_id, sentimentLabel)
+
+# Join with lemmatized token data
+rrReviewWords <- rrTokens %>%
+  inner_join(rrLabels, by = "review_id")
+
+# ---------------------------
+# A. Bing Dictionary Prediction
+# ---------------------------
+bingScore <- rrReviewWords %>%
+  inner_join(get_sentiments("bing"), by = "word") %>%
+  mutate(posNeg = ifelse(sentiment == "positive", 1, -1)) %>%
+  group_by(review_id) %>%
+  summarise(bingScore = sum(posNeg), .groups = "drop") %>%
+  mutate(pred_bing = ifelse(bingScore > 0, 1, 0))
+
+# ---------------------------
+# B. NRC Dictionary Prediction (Positive vs Negative only)
+# ---------------------------
+nrcScore <- rrReviewWords %>%
+  inner_join(get_sentiments("nrc"), by = "word") %>%
+  filter(sentiment %in% c("positive", "negative")) %>%
+  mutate(posNeg = ifelse(sentiment == "positive", 1, -1)) %>%
+  group_by(review_id) %>%
+  summarise(nrcScore = sum(posNeg), .groups = "drop") %>%
+  mutate(pred_nrc = ifelse(nrcScore > 0, 1, 0))
+
+# ---------------------------
+# C. AFINN Dictionary Prediction (Numeric valence)
+# ---------------------------
+afinnScore <- rrReviewWords %>%
+  inner_join(get_sentiments("afinn"), by = "word") %>%
+  group_by(review_id) %>%
+  summarise(afinnScore = sum(value), .groups = "drop") %>%
+  mutate(pred_afinn = ifelse(afinnScore > 0, 1, 0))
+
+# ---------------------------
+# Merge Predictions
+# ---------------------------
+dictPredictions <- rrLabels %>%
+  left_join(bingScore %>% select(review_id, pred_bing), by = "review_id") %>%
+  left_join(nrcScore %>% select(review_id, pred_nrc), by = "review_id") %>%
+  left_join(afinnScore %>% select(review_id, pred_afinn), by = "review_id")
+
+# ---------------------------
+# Accuracy of Each Dictionary
+# ---------------------------
+dictPredictions %>%
   summarise(
-    avg_emp_length = mean(as.numeric(gsub('[^0-9]', '', emp_length)), na.rm = TRUE),
-    avg_annual_inc = mean(annual_inc, na.rm = TRUE),
-    avg_loan_amnt = mean(loan_amnt, na.rm = TRUE),
-    avg_return = mean(return, na.rm = TRUE)
+    Bing_Accuracy = mean(pred_bing == sentimentLabel, na.rm = TRUE),
+    NRC_Accuracy = mean(pred_nrc == sentimentLabel, na.rm = TRUE),
+    AFINN_Accuracy = mean(pred_afinn == sentimentLabel, na.rm = TRUE)
   )
-summary_stats
-
-
-##Generate some (at least 3) new derived attributes
-
-# 1. Adjusted Debt-to-Income Ratio
-lcdf$adjusted_dti <- lcdf$dti * (lcdf$loan_amnt / lcdf$annual_inc)
-
-ggplot(lcdf, aes(x = loan_status, y = adjusted_dti, fill = loan_status)) +
-  geom_boxplot(outlier.color = 'red', outlier.shape = 16, notch = TRUE) +
-  labs(title = 'Adjusted DTI by Loan Status',
-       x = 'Loan Status',
-       y = 'Adjusted DTI') +
-  theme_minimal() +
-  scale_fill_brewer(palette = 'Set2')
-
-
-# 2. Credit Utilization Metric
-lcdf$credit_utilization <- lcdf$revol_bal / (lcdf$annual_inc / 12)
-
-ggplot(lcdf, aes(x = loan_status, y = credit_utilization, fill = loan_status)) +
-  geom_boxplot(outlier.color = 'red', outlier.shape = 16, notch = TRUE) +
-  labs(title = 'Credit Utilization by Loan Status',
-       x = 'Loan Status',
-       y = 'Credit Utilization') +
-  theme_minimal() +
-  scale_fill_brewer(palette = 'Set3')
-
-
-
-# 3. Payment-to-Income Ratio
-lcdf$payment_to_income <- lcdf$installment / (lcdf$annual_inc / 12)
-
-ggplot(lcdf, aes(x = loan_status, y = payment_to_income, fill = loan_status)) +
-  geom_boxplot(outlier.color = 'red', outlier.shape = 16, notch = TRUE) +
-  labs(title = 'Payment-to-Income Ratio by Loan Status',
-       x = 'Loan Status',
-       y = 'Payment-to-Income Ratio') +
-  theme_minimal() +
-  scale_fill_brewer(palette = 'Set1')
-
-
-#Missing VAlues
-
-
-
 ```
+```{r question5_modeling, message=FALSE, warning=FALSE}
+# ====== Question 5: Predictive Modeling ======
+# Load required libraries
+library(ranger)
+library(rsample)
+library(e1071)
+library(pROC)
+library(dplyr)
+
+
+# ----------------------
+# Preprocessing: Use Bing dictionary terms
+# ----------------------
+revDTM_sentiBing <- rrSenti_bing %>%
+  pivot_wider(id_cols = c(review_id, stars), names_from = word, values_from = tf_idf) %>%
+  ungroup()
+
+# Filter for binary sentiment label (hiLo), remove 3-star reviews
+revDTM_sentiBing <- revDTM_sentiBing %>%
+  filter(stars != 3) %>%
+  mutate(hiLo = ifelse(stars <= 2, -1, 1)) %>%
+  select(-stars)
+
+# Replace NA with 0
+revDTM_sentiBing[] <- lapply(revDTM_sentiBing, function(x) ifelse(is.na(x), 0, x))
+revDTM_sentiBing$hiLo <- as.factor(revDTM_sentiBing$hiLo)
+
+# Split into train/test sets
+set.seed(123)
+revDTM_sentiBing_split <- initial_split(revDTM_sentiBing, prop = 0.5)
+revDTM_sentiBing_trn <- training(revDTM_sentiBing_split)
+revDTM_sentiBing_tst <- testing(revDTM_sentiBing_split)
+
+# ----------------------
+# Random Forest (using Bing terms)
+# ----------------------
+rfModel_bing <- ranger(
+  dependent.variable.name = "hiLo",
+  data = revDTM_sentiBing_trn %>% select(-review_id),
+  num.trees = 500,
+  importance = "permutation",
+  probability = TRUE
+)
+
+# Predictions
+pred_rf_trn <- predict(rfModel_bing, revDTM_sentiBing_trn %>% select(-review_id))$predictions
+pred_rf_tst <- predict(rfModel_bing, revDTM_sentiBing_tst %>% select(-review_id))$predictions
+
+# Confusion Matrices
+table(actual = revDTM_sentiBing_trn$hiLo, preds = pred_rf_trn[, 2] > 0.5)
+table(actual = revDTM_sentiBing_tst$hiLo, preds = pred_rf_tst[, 2] > 0.5)
+
+# ROC curves
+roc_rf_trn <- roc(revDTM_sentiBing_trn$hiLo, pred_rf_trn[,2], levels = c(-1,1))
+roc_rf_tst <- roc(revDTM_sentiBing_tst$hiLo, pred_rf_tst[,2], levels = c(-1,1))
+plot.roc(roc_rf_trn, col = 'blue')
+plot.roc(roc_rf_tst, add = TRUE, col = 'red')
+legend("bottomright", legend = c("Training", "Test"), col = c("blue", "red"), lwd = 2, cex = 0.8, bty = 'n')
+
+# ----------------------
+# Naive Bayes (Bing terms)
+# ----------------------
+nbModel_bing <- naiveBayes(hiLo ~ ., data = revDTM_sentiBing_trn %>% select(-review_id))
+pred_nb_trn <- predict(nbModel_bing, revDTM_sentiBing_trn, type = "raw")
+pred_nb_tst <- predict(nbModel_bing, revDTM_sentiBing_tst, type = "raw")
+
+# Confusion Matrices
+table(actual = revDTM_sentiBing_trn$hiLo, predicted = pred_nb_trn[,2] > 0.5)
+table(actual = revDTM_sentiBing_tst$hiLo, predicted = pred_nb_tst[,2] > 0.5)
+
+# AUCs
+auc(as.numeric(revDTM_sentiBing_trn$hiLo), pred_nb_trn[,2])
+auc(as.numeric(revDTM_sentiBing_tst$hiLo), pred_nb_tst[,2])
+
+# ROC curve for NB
+roc_nb_trn <- roc(revDTM_sentiBing_trn$hiLo, pred_nb_trn[,2], levels = c(-1,1))
+roc_nb_tst <- roc(revDTM_sentiBing_tst$hiLo, pred_nb_tst[,2], levels = c(-1,1))
+plot.roc(roc_nb_trn, col = 'blue', legacy.axes = TRUE)
+plot.roc(roc_nb_tst, add = TRUE, col = 'red')
+legend("bottomright", legend = c("NB Train", "NB Test"), col = c("blue", "red"), lwd = 2, cex = 0.8, bty = 'n')
+```
+
+
+```{r question5d, message=FALSE, warning=FALSE}
+
+# Part D: Broader Vocabulary (Non-Dictionary TF-IDF Terms)
+# ----------------------
+# Use full review tokens (not just from sentiment dictionaries)
+revDTM_all <- rrTokens %>%
+  pivot_wider(id_cols = c(review_id, stars), names_from = word, values_from = tf_idf) %>%
+  ungroup()
+
+revDTM_all <- revDTM_all %>%
+  filter(stars != 3) %>%
+  mutate(hiLo = ifelse(stars <= 2, -1, 1)) %>%
+  select(-stars)
+
+revDTM_all <- revDTM_all %>% replace(is.na(.), 0)
+revDTM_all$hiLo <- as.factor(revDTM_all$hiLo)
+
+set.seed(123)
+revDTM_all_split <- initial_split(revDTM_all, prop = 0.5)
+revDTM_all_trn <- training(revDTM_all_split)
+revDTM_all_tst <- testing(revDTM_all_split)
+
+# Random Forest with all terms
+rfModel_all <- ranger(
+  dependent.variable.name = "hiLo",
+  data = revDTM_all_trn %>% select(-review_id),
+  num.trees = 500,
+  importance = "permutation",
+  probability = TRUE
+)
+
+pred_rf_all_trn <- predict(rfModel_all, revDTM_all_trn %>% select(-review_id))$predictions
+pred_rf_all_tst <- predict(rfModel_all, revDTM_all_tst %>% select(-review_id))$predictions
+
+# AUCs for full vocab model
+auc_rf_all_trn <- auc(as.numeric(revDTM_all_trn$hiLo), pred_rf_all_trn[,2])
+auc_rf_all_tst <- auc(as.numeric(revDTM_all_tst$hiLo), pred_rf_all_tst[,2])
+```
+```{r question5e, message=FALSE, warning=FALSE}
+
+# ----------------------
+# Part E: Tabulate and Compare Results
+# ----------------------
+# AUC values for Naive Bayes (needed for table)
+nb_train_auc <- auc(as.numeric(revDTM_sentiBing_trn$hiLo), pred_nb_trn[,2])
+nb_test_auc <- auc(as.numeric(revDTM_sentiBing_tst$hiLo), pred_nb_tst[,2])
+
+# ----------------------
+# Part E: Tabulate and Compare Results
+# ----------------------
+# Create summary results table with AUC values
+model_results <- data.frame(
+  Model = c("Random Forest (Bing)", "Naive Bayes (Bing)", "Random Forest (All TF-IDF Terms)"),
+  Train_AUC = c(auc(roc_rf_trn), nb_train_auc, auc_rf_all_trn),
+  Test_AUC = c(auc(roc_rf_tst), nb_test_auc, auc_rf_all_tst)
+)
+
+# Print comparison table
+knitr::kable(model_results, caption = "Comparison of Model Performance using AUC")
+```
+
+```{r q6_part_a, message=FALSE, warning=FALSE}
+# ====== Question 6 - Part A: ChatGPT Sentiment Classification ======
+library(httr)
+library(jsonlite)
+library(dplyr)
+library(tibble)
+
+Sys.setenv(OPENAI_API_KEY = "your_openai_api_key_here")  # Replace with your actual key
+
+get_sentiment_chatgpt <- function(review_text) {
+  response <- httr::POST(
+    url = "https://api.openai.com/v1/chat/completions",
+    add_headers(Authorization = paste("Bearer", Sys.getenv("OPENAI_API_KEY")),
+                `Content-Type` = "application/json"),
+    body = toJSON(list(
+      model = "gpt-3.5-turbo",
+      messages = list(
+        list(role = "system", content = "You are a helpful assistant for analyzing customer reviews."),
+        list(role = "user", content = paste0("Please classify the following restaurant review as 'positive' or 'negative':\n\n", review_text))
+      )
+    ), auto_unbox = TRUE)
+  )
+  result <- content(response, as = "parsed")
+  sentiment <- result$choices[[1]]$message$content
+  return(sentiment)
+}
+
+set.seed(123)
+colnames(resReviewsData)[1:3] <- c("review_id", "stars", "text")
+sample_reviews <- resReviewsData %>% 
+  select(review_id, stars, text) %>% 
+  sample_n(200)
+
+sample_reviews$chatgpt_sentiment <- sapply(sample_reviews$text, get_sentiment_chatgpt)
+```
+
