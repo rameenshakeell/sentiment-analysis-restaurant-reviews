@@ -58,6 +58,10 @@ Using a sample of restaurant reviews from Yelp, this project:
 
 The project demonstrates that while sentiment lexicons provide a useful baseline, machine learning models—especially those trained on broad vocabularies—offer superior performance. Incorporating LLMs like ChatGPT adds qualitative depth, enabling richer interpretation of review sentiment.
 
+### 📂 Dataset
+The sample dataset used in this project contains 42,000+ raw Yelp restaurant reviews with star ratings, review text, and business-related metadata.  
+🔗 [Download from Google Drive] **https://drive.google.com/file/d/1Eh5Xk2GaCTUkeG-kv2oPIcDuDa9bPFFZ/view?usp=drive_link**
+
 ## 🙌 Credits
 
 This project was completed by Rameen Shakeel as part of the IDS 572: Data Mining for Business Analytics course at the University of Illinois Chicago in Spring 2025.
